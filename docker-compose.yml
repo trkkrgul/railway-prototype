@@ -1,0 +1,96 @@
+version: '3.8'
+
+# API_SERVER_PORT = 3000
+# MANAGER_PORT = 4000
+# FAMILY_START_PORT = 4001
+# MONGODB_PORT = 27017
+# REDIS_PORT = 6379
+
+services:
+  mongodb: # MongoDB server (store train schedules, old logs
+    image: mongo:latest
+    container_name: mongodb
+    ports:
+      - ${MONGODB_PORT}:27017
+    volumes:
+      - mongodb_data:/data/db
+    restart: always
+    networks:
+      - railway-network
+
+  manager: # Family manager (start new family workers, manage train schedules)
+    container_name: manager
+    build:
+      context: ./manager
+    ports:
+      - ${MANAGER_PORT}:4000
+    depends_on:
+      - mongodb
+      - redis
+    environment:
+      - DOCKER_COMPOSE_FILE=/docker-compose.yml
+      - PORT=4000
+      - MONGODB_URL=mongodb://mongodb:27017/railway
+      - REDIS_URL=redis://redis:6379
+      - FAMILY_START_PORT=${FAMILY_START_PORT}
+    restart: always
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - railway-network
+
+  family_worker: # Family worker (serve train real-time data)
+    build:
+      context: ./family
+    image: family_worker_image
+    environment:
+      - MONGODB_URL=mongodb://mongodb:27017/railway
+      - REDIS_URL=redis://redis:6379
+      - FAMILY_NAME=${FAMILY_NAME}
+      - FAMILY_PORT=${FAMILY_PORT}
+    depends_on:
+      - mongodb
+      - manager
+      - redis
+    deploy:
+      replicas: 0 # Start with 0 replicas; managed by the manager
+    restart: always
+    networks:
+      - railway-network
+
+  # api_server: # API server (get API requests from clients and send them to family manager)
+  #   container_name: api_server
+  #   build:
+  #     context: ./server
+  #   ports:
+  #     - ${API_SERVER_PORT}:3000
+  #   environment:
+  #     - PORT=3000
+  #     - MANAGER_URL=http://manager:4000
+  #     - MONGODB_URL=mongodb://mongodb:27017/railway
+  #     - REDIS_URL=redis://redis:6379
+  #     - FAMILY_START_PORT=${FAMILY_START_PORT}
+  #   depends_on:
+  #     - redis
+  #     - manager
+  #   restart: always
+
+  redis: # Redis server (store train real-time data)
+    image: redis:latest
+    container_name: redis
+    ports:
+      - ${REDIS_PORT}:6379
+    volumes:
+      - redis_data:/data
+    restart: always
+    networks:
+      - railway-network
+
+volumes:
+  mongodb_data:
+  redis_data:
+
+networks:
+  railway-network:
+    external: true
+    driver: bridge
